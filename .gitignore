@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.env
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+thumbs.db
+
+# Node.js
+node_modules/
+.next/
+out/
+
+# Docker
+.dockerignore
+
+# Data
+*.csv
+*.json
+*.log
+*.sqlite
+*.db
+
+# ML Models
+*.pkl
+*.h5
