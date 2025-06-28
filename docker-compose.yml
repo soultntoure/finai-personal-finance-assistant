@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
+      BACKEND_PLAI_ENV: ${BACKEND_PLAI_ENV}
+      BACKEND_PLAID_CLIENT_ID: ${BACKEND_PLAID_CLIENT_ID}
+      BACKEND_PLAID_SECRET: ${BACKEND_PLAID_SECRET}
+      BACKEND_ML_SERVICE_URL: ${BACKEND_ML_SERVICE_URL}
+      REDIS_URL: ${REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml_service:
+        condition: service_started # ML service might take longer to load models
+    command: bash -c "alembic upgrade head && uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+
+  ml_service:
+    build:
+      context: ./ml_service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      ML_SERVICE_SECRET_KEY: ${ML_SERVICE_SECRET_KEY}
+    depends_on:
+      - db # ML might also need DB connection for fetching data for predictions/retraining
+    command: uvicorn src.prediction_api:app --host 0.0.0.0 --port 8001
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    depends_on:
+      backend:
+        condition: service_started
+    command: npm run dev
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY}
+      BACKEND_PLAI_ENV: ${BACKEND_PLAI_ENV}
+      BACKEND_PLAID_CLIENT_ID: ${BACKEND_PLAID_CLIENT_ID}
+      BACKEND_PLAID_SECRET: ${BACKEND_PLAID_SECRET}
+      REDIS_URL: ${REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    command: celery -A src.services.celery_worker worker --loglevel=info --pool=solo # Using --pool=solo for simple local dev, use --pool=fork for prod
+
+volumes:
+  postgres_data:
